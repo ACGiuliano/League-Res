@@ -43,7 +43,7 @@ function LeagueRes:OnEnable()
   self:RegisterEvent("START_LOOT_ROLL", function(_, rollID) NS.Loot:OnStartLootRoll(rollID) end)
 
   -- EJ loot can arrive async; refresh the list if open
-  self:RegisterEvent("EJ_LOOT_DATA_RECEIVED", function()
+  self:RegisterEvent("EJ_LOOT_DATA_RECIEVED", function()
     if NS.UI and NS.UI.RefreshEJList then
       NS.UI:RefreshEJList(true)
     end
