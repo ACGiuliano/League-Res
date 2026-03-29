@@ -1,0 +1,15 @@
+## Interface: 120001
+## Title: LeagueRes
+## Notes: Soft reserve assistant for raid teams.
+## Author: Bing Streans
+## IconTexture: Interface\Icons\INV_cape_special_treasure_c_01
+## Version: 0.3.0
+## SavedVariables: LeagueResDB
+## Dependencies: Ace3
+
+Data.lua
+Comm.lua
+EJ.lua
+UI.lua
+Loot.lua
+Core.lua
