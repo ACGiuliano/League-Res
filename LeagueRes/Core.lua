@@ -144,6 +144,28 @@ function NS:BroadcastFullSync()
   print("|cff00ff00LeagueRes:|r Full sync broadcast.")
 end
 
+function NS:ClearAllReservations()
+  if not LeagueResDB.profile.isLootMaster then
+    print("|cffff0000LeagueRes:|r Enable Loot Master checkbox first.")
+    return
+  end
+
+  wipe(NS.State.raid.reservationsByGuid)
+
+  local me = NS:GetPlayerGuid()
+  if me then
+    NS.State.raid.nameByGuid[me] = GetUnitName("player", true)
+  end
+
+  if NS.UI and NS.UI.RefreshRaidPanel then
+    NS.UI:RefreshRaidPanel()
+  end
+
+  NS:BroadcastFullSync()
+
+  print("|cff00ff00LeagueRes:|r Cleared all soft-res reservations.")
+end
+
 function NS:OnComm(msg, sender)
   print("LeagueRes received:", msg.t or "nil", "from", sender or "unknown")
   if msg.t == "HELLO" then

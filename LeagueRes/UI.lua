@@ -368,11 +368,17 @@ end
 function NS.UI:BuildRaidPanel(container)
   if not container then return end
 
+  local holder = AceGUI:Create("SimpleGroup")
+  holder:SetFullWidth(true)
+  holder:SetFullHeight(true)
+  holder:SetLayout("Fill")
+  container:AddChild(holder)
+
   local scroll = AceGUI:Create("ScrollFrame")
   scroll:SetLayout("List")
   scroll:SetFullWidth(true)
   scroll:SetFullHeight(true)
-  container:AddChild(scroll)
+  holder:AddChild(scroll)
 
   self.raidScroll = scroll
 end
@@ -553,6 +559,14 @@ function NS.UI:BuildLMPanel(container)
     NS:BroadcastFullSync()
   end)
   btnRow:AddChild(dump)
+
+  local clearAll = AceGUI:Create("Button")
+  clearAll:SetText("Clear All Reservations")
+  clearAll:SetWidth(170)
+  clearAll:SetCallback("OnClick", function()
+    NS:ClearAllReservations()
+  end)
+  btnRow:AddChild(clearAll)
 end
 
 function NS.UI:RefreshLMPanel()
