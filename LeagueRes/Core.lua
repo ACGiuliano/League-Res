@@ -67,18 +67,84 @@ function LeagueRes:OnEnable()
   NS:RequestSync()
 end
 
-function NS:RebuildRoster()
-  -- Keep names for saved reservations, including temporarily disconnected players.
-  for i = 1, GetNumGroupMembers() do
-    local unit = IsInRaid() and ("raid" .. i) or ("party" .. i)
-    if UnitExists(unit) then
-      local guid, name = UnitGUID(unit), GetUnitName(unit, true)
-      if guid and name then NS.State.raid.nameByGuid[guid] = name end
+function NS:GetCurrentGroupRoster()
+  if not IsInGroup() then return {}, 0 end
+  local total = GetNumGroupMembers()
+  if total == 0 then return {}, 0 end
+  local members, seen = {}, {}
+  local function addUnit(unit)
+    -- Disconnected members still count if they remain in the group.
+    local guid = UnitGUID(unit)
+    if guid and not seen[guid] then
+      seen[guid] = true
+      members[#members + 1] = { guid = guid, name = GetUnitName(unit, true) or guid }
     end
+  end
+  if IsInRaid() then
+    for i = 1, total do addUnit("raid" .. i) end
+  else
+    addUnit("player")
+    for i = 1, total - 1 do addUnit("party" .. i) end
+  end
+  table.sort(members, function(a, b) return a.name:lower() < b.name:lower() end)
+  return members, total
+end
+
+function NS:RebuildRoster()
+  -- Keep saved names, but use only the live roster when checking submissions.
+  for _, member in ipairs(self:GetCurrentGroupRoster()) do
+    NS.State.raid.nameByGuid[member.guid] = member.name
   end
   local me, name = NS:GetPlayerGuid(), GetUnitName("player", true)
   if me and name then NS.State.raid.nameByGuid[me] = name end
   NS.UI:RefreshRaidPanel()
+  NS.UI:RefreshLMPanel()
+end
+
+function NS:CanCheckSubmissions()
+  return IsInGroup() and (LeagueResDB.profile.isLootMaster
+    or NS.State.raid.lootMasterGuid == NS:GetPlayerGuid()
+    or UnitIsGroupLeader("player")) and true or false
+end
+
+function NS:GetSubmissionReport()
+  local members, total = self:GetCurrentGroupRoster()
+  local report = { total = total, submitted = 0, missing = {}, unresolved = total - #members }
+  for _, member in ipairs(members) do
+    -- An explicitly submitted empty selection counts as a submission.
+    if type(NS.State.raid.reservationsByGuid[member.guid]) == "table" then
+      report.submitted = report.submitted + 1
+    else
+      report.missing[#report.missing + 1] = member.name
+    end
+  end
+  return report
+end
+
+function NS:PrintMissingSubmissions()
+  if not IsInGroup() then
+    print("|cffffaa00LeagueRes:|r Join a group before checking submissions.")
+    return
+  end
+  if not self:CanCheckSubmissions() then
+    print("|cffffaa00LeagueRes:|r Only the Loot Master or group leader can check missing submissions.")
+    return
+  end
+  local report = self:GetSubmissionReport()
+  if report.total == 0 then
+    print("|cffffaa00LeagueRes:|r The group roster is still loading. Check again shortly.")
+    return
+  end
+  print(("|cff00ff00LeagueRes:|r %d/%d group members have submitted; %d missing."):format(
+    report.submitted, report.total, #report.missing))
+  for _, name in ipairs(report.missing) do
+    print("|cffffaa00LeagueRes:|r Missing SR submission: " .. name)
+  end
+  if report.unresolved > 0 then
+    print(("|cffffaa00LeagueRes:|r %d roster entry/entries are still loading. Check again shortly."):format(report.unresolved))
+  elseif #report.missing == 0 then
+    print("|cff00ff00LeagueRes:|r Everyone in the current group has submitted.")
+  end
 end
 
 function NS:RequestSync()
@@ -143,7 +209,7 @@ function NS:OnComm(msg, sender)
   if msg.v ~= NS.PROTOCOL then
     if not NS.warnedOldVersion then
       NS.warnedOldVersion = true
-      print("|cffffaa00LeagueRes:|r Another player has an incompatible version. Everyone must update to 0.3.2.")
+      print("|cffffaa00LeagueRes:|r Another player has an incompatible version. Everyone must update to 0.3.3.")
     end
     return
   end

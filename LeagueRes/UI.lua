@@ -9,6 +9,7 @@ NS.UI = {
   mainPanel = nil,
   contentHost = nil,
   raidScroll = nil,
+  missingSRButton = nil,
 
   tabs = {
     my = nil,
@@ -100,6 +101,7 @@ function NS.UI:ShowPanel(which)
   self.ej.srButtons = {}
   self.ej.srLabels = {}
   self.ej.currentLabel = nil
+  self.missingSRButton = nil
   self.mainPanel:ReleaseChildren()
   self.raidScroll = nil
 
@@ -140,6 +142,7 @@ function NS.UI:OpenMain()
     NS.UI.contentHost = nil
     NS.UI.mainPanel = nil
     NS.UI.raidScroll = nil
+    NS.UI.missingSRButton = nil
     NS.UI.tabs.my = nil
     NS.UI.tabs.raid = nil
     NS.UI.tabs.lm = nil
@@ -499,6 +502,7 @@ function NS.UI:BuildLMPanel(container)
   lmToggle:SetFullWidth(true)
   lmToggle:SetCallback("OnValueChanged", function(_, _, val)
     LeagueResDB.profile.isLootMaster = val and true or false
+    NS.UI:RefreshLMPanel()
     if val and not NS:CanBroadcastAsLootMaster() then
       print("|cffffaa00LeagueRes:|r You are not leader/assistant; others may ignore your settings.")
     end
@@ -573,10 +577,28 @@ function NS.UI:BuildLMPanel(container)
     NS:ClearAllReservations()
   end)
   btnRow:AddChild(clearAll)
+
+  local checkRow = AceGUI:Create("SimpleGroup")
+  checkRow:SetFullWidth(true)
+  checkRow:SetLayout("Flow")
+  container:AddChild(checkRow)
+
+  local missing = AceGUI:Create("Button")
+  missing:SetText("Check Missing SRs")
+  missing:SetWidth(170)
+  missing:SetCallback("OnClick", function() NS:PrintMissingSubmissions() end)
+  checkRow:AddChild(missing)
+  self.missingSRButton = missing
+
+  local hint = AceGUI:Create("Label")
+  hint:SetWidth(460)
+  hint:SetText("Prints the submission count and missing players in your chat window.")
+  checkRow:AddChild(hint)
+  self:RefreshLMPanel()
 end
 
 function NS.UI:RefreshLMPanel()
-  -- reserved for future dynamic LM refresh logic
+  if self.missingSRButton then self.missingSRButton:SetDisabled(not NS:CanCheckSubmissions()) end
 end
 
 function NS.UI:OpenLootPicker()
@@ -753,6 +775,7 @@ function NS.UI:RefreshReservationPanels()
   self:RefreshSRVisuals()
   self:UpdateCurrentSRLabel()
   self:RefreshRaidPanel()
+  self:RefreshLMPanel()
 end
 
 function NS.UI:StopEJRefresh()
