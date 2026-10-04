@@ -82,7 +82,7 @@ function NS.EJ:GetInstanceLoot(instanceID, difficultyID)
   for i = 1, numLoot do
     local info = C_EncounterJournal.GetLootInfoByIndex(i)
     -- A delayed response to the previous difficulty must not be selectable.
-    local linkDifficulty = info and NS:ItemLinkDifficulty(info.link)
+    local linkDifficulty = info and NS:ItemLinkDifficulty(info.link, difficultyID)
     local wrongDifficulty = linkDifficulty and linkDifficulty ~= difficultyID
     if not info or not info.itemID or not info.name or not info.link then pending = true end
     if wrongDifficulty then pending = true end
@@ -92,6 +92,7 @@ function NS.EJ:GetInstanceLoot(instanceID, difficultyID)
         itemID = info.itemID, name = info.name, link = not wrongDifficulty and info.link or nil,
         icon = info.icon, slot = info.slot,
         instanceID = instanceID, difficultyID = difficultyID,
+        selectable = info.name ~= nil and info.name ~= "" and not wrongDifficulty,
       }
       if (not info.name or not info.link) and C_Item and C_Item.RequestLoadItemDataByID then
         C_Item.RequestLoadItemDataByID(info.itemID)

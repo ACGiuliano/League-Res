@@ -79,7 +79,8 @@ function NS:ReservationText(item)
   return (r.link or name or ("item:" .. r.itemID)) .. " [" .. self:DifficultyName(r.difficultyID) .. "]"
 end
 
-function NS:ItemLinkDifficulty(itemLink)
+-- Item links contain an ItemCreationContext, not an instance difficulty ID.
+function NS:ItemLinkContext(itemLink)
   local data = itemLink and itemLink:match("item:([^|]+)")
   if data then
     local fields = {}
@@ -89,10 +90,40 @@ function NS:ItemLinkDifficulty(itemLink)
   end
 end
 
+local raidFamilies = {
+  [3] = "Normal", [4] = "Normal", [9] = "Normal", [14] = "Normal",
+  [5] = "Heroic", [6] = "Heroic", [15] = "Heroic",
+  [16] = "Mythic", [7] = "Finder", [17] = "Finder",
+}
+local modernDifficulties = { Normal = 14, Heroic = 15, Mythic = 16, Finder = 17 }
+local contextFamilies, contextEnum
+
+function NS:ItemLinkDifficulty(itemLink, selectedDifficulty)
+  local context = self:ItemLinkContext(itemLink)
+  local enum = Enum and Enum.ItemCreationContext
+  if not context or not enum then return nil end
+  if contextEnum ~= enum then
+    contextEnum, contextFamilies = enum, {}
+    for name, value in pairs(enum) do
+      -- Include the Extended variants using the game's current enum values.
+      if type(name) == "string" and type(value) == "number" then
+        local family = name:match("^Raid(Normal)") or name:match("^Raid(Heroic)")
+          or name:match("^Raid(Mythic)") or name:match("^Raid(Finder)")
+        if family then contextFamilies[value] = family end
+      end
+    end
+  end
+  local family = contextFamilies[context]
+  if not family then return nil end
+  -- Context alone cannot distinguish a legacy raid's 10/25-player size.
+  if selectedDifficulty and raidFamilies[selectedDifficulty] == family then return selectedDifficulty end
+  return modernDifficulties[family]
+end
+
 function NS:LootDifficulty(itemLink)
-  local linkDifficulty = self:ItemLinkDifficulty(itemLink)
-  if linkDifficulty then return linkDifficulty end
   local _, _, difficultyID = GetInstanceInfo()
+  local linkDifficulty = self:ItemLinkDifficulty(itemLink, difficultyID)
+  if linkDifficulty then return linkDifficulty end
   if difficultyID and difficultyID > 0 then return difficultyID end
 end
 

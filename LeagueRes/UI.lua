@@ -69,7 +69,7 @@ end
 local function displayLinkOrFallback(itemID, ejLink, ejName)
   if ejLink and ejLink ~= "" then return ejLink end
   if ejName and ejName ~= "" then
-    return ("%s (%d, loading link...)"):format(ejName, itemID)
+    return ejName
   end
 
   return ("item:%d (loading...)"):format(itemID)
@@ -803,7 +803,8 @@ function NS.UI:RefreshEJList(forceInvalidate)
       local btn = AceGUI:Create("Button")
       btn:SetFullWidth(true)
       btn:SetText(shown .. " [" .. NS:DifficultyName(it.difficultyID) .. "]")
-      btn:SetDisabled(not it.name or not it.link)
+      -- A hyperlink is optional; itemID + Journal difficulty identify the SR.
+      btn:SetDisabled(not it.selectable)
       btn:SetCallback("OnClick", function()
         NS.UI:SetSRSlot(NS.UI.ej.selectedTarget or 1, it)
         if NS.UI.picker.closeAfterSelect and NS.UI.lootPickerFrame then
@@ -823,7 +824,7 @@ function NS.UI:RefreshEJList(forceInvalidate)
   elseif pending or shownCount == 0 then
     local lbl = AceGUI:Create("Label")
     lbl:SetFullWidth(true)
-    lbl:SetText(pending and "Some loot is still loading..." or "No items match your search.")
+    lbl:SetText(pending and "Some item data is still loading; available items can be selected." or "No items match your search.")
     self.picker.lootScroll:AddChild(lbl)
   end
   self.picker.refreshing = false

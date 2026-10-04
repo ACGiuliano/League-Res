@@ -143,7 +143,7 @@ function NS:OnComm(msg, sender)
   if msg.v ~= NS.PROTOCOL then
     if not NS.warnedOldVersion then
       NS.warnedOldVersion = true
-      print("|cffffaa00LeagueRes:|r Another player has an incompatible version. Everyone must update to 0.3.1.")
+      print("|cffffaa00LeagueRes:|r Another player has an incompatible version. Everyone must update to 0.3.2.")
     end
     return
   end
