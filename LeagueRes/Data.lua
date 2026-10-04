@@ -1,6 +1,7 @@
 local ADDON, NS = ...
 
 NS.PREFIX = "LeagueRes1" -- addon message prefix (<=16 chars)
+NS.PROTOCOL = 2
 
 NS.DEFAULTS = {
   profile = {
@@ -11,7 +12,7 @@ NS.DEFAULTS = {
       maxWins = 0,              -- 0 = unlimited
       lockSR = false,
     },
-    mySR = { 0, 0 },            -- itemIDs
+    mySR = { 0, 0 },            -- 0 or {itemID, difficultyID, instanceID, link, name}
     ej = {
       tierIndex = nil,
       instanceID = nil,
@@ -20,11 +21,11 @@ NS.DEFAULTS = {
   },
 }
 
--- Runtime state (not saved)
+-- Bound to this character's SavedVariables by Core:OnInitialize.
 NS.State = {
   raid = {
     settings = nil,                 -- authoritative settings for this session (from LM)
-    reservationsByGuid = {},        -- [guid] = {itemID1, itemID2}
+    reservationsByGuid = {},        -- [guid] = {reservation1, reservation2}
     winsByGuid = {},                -- [guid] = number
     nameByGuid = {},                -- [guid] = "Player-Realm"
     locked = false,
@@ -34,6 +35,65 @@ NS.State = {
 
 function NS:GetPlayerGuid()
   return UnitGUID("player")
+end
+
+function NS:Copy(value)
+  if type(value) ~= "table" then return value end
+  local out = {}
+  for k, v in pairs(value) do out[k] = self:Copy(v) end
+  return out
+end
+
+function NS:Reservation(item)
+  local id = self:NormalizeItemID(type(item) == "table" and item.itemID or item)
+  if not id or id <= 0 then return 0 end
+  if type(item) ~= "table" then return { itemID = id } end
+  return {
+    itemID = id, difficultyID = tonumber(item.difficultyID),
+    instanceID = tonumber(item.instanceID), link = item.link, name = item.name,
+  }
+end
+
+function NS:ReservationKey(item)
+  local r = self:Reservation(item)
+  if r == 0 then return nil end
+  return tostring(r.itemID) .. ":" .. tostring(r.difficultyID or "unknown")
+end
+
+function NS:MatchesReservation(item, itemID, difficultyID)
+  local r = self:Reservation(item)
+  return r ~= 0 and r.itemID == itemID and r.difficultyID ~= nil
+    and difficultyID ~= nil and r.difficultyID == difficultyID
+end
+
+function NS:DifficultyName(id)
+  return (id and GetDifficultyInfo and GetDifficultyInfo(id)) or "Choose difficulty again"
+end
+
+function NS:ReservationText(item)
+  local r = self:Reservation(item)
+  if r == 0 then return "—" end
+  local getInfo = C_Item and C_Item.GetItemInfo or GetItemInfo
+  local name = r.name or (getInfo and getInfo(r.link or r.itemID))
+  -- Never replace a difficulty-specific Journal link with a generic itemID link.
+  return (r.link or name or ("item:" .. r.itemID)) .. " [" .. self:DifficultyName(r.difficultyID) .. "]"
+end
+
+function NS:ItemLinkDifficulty(itemLink)
+  local data = itemLink and itemLink:match("item:([^|]+)")
+  if data then
+    local fields = {}
+    for field in (data .. ":"):gmatch("(.-):") do fields[#fields + 1] = field end
+    local id = tonumber(fields[12])
+    if id and id > 0 then return id end
+  end
+end
+
+function NS:LootDifficulty(itemLink)
+  local linkDifficulty = self:ItemLinkDifficulty(itemLink)
+  if linkDifficulty then return linkDifficulty end
+  local _, _, difficultyID = GetInstanceInfo()
+  if difficultyID and difficultyID > 0 then return difficultyID end
 end
 
 function NS:IsInRaid()
