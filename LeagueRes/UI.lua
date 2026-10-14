@@ -9,6 +9,8 @@ NS.UI = {
   mainPanel = nil,
   contentHost = nil,
   raidScroll = nil,
+  missingSRButton = nil,
+  lootMasterToggle = nil,
 
   tabs = {
     my = nil,
@@ -40,18 +42,21 @@ NS.UI = {
 }
 
 local function itemLinkFromID(itemID)
+  itemID = type(itemID) == "table" and itemID.itemID or itemID
   if not itemID or itemID == 0 then return nil end
-  local link = select(2, GetItemInfo(itemID))
+  local link = select(2, (C_Item and C_Item.GetItemInfo or GetItemInfo)(itemID))
   return link
 end
 
 local function itemNameFromID(itemID)
+  itemID = type(itemID) == "table" and itemID.itemID or itemID
   if not itemID or itemID == 0 then return nil end
-  local name = GetItemInfo(itemID)
+  local name = (C_Item and C_Item.GetItemInfo or GetItemInfo)(itemID)
   return name
 end
 
 local function itemIconFromID(itemID)
+  itemID = type(itemID) == "table" and itemID.itemID or itemID
   if not itemID or itemID == 0 then return nil end
 
   if C_Item and C_Item.GetItemIconByID then
@@ -59,21 +64,17 @@ local function itemIconFromID(itemID)
     if icon then return icon end
   end
 
-  local _, _, _, _, _, _, _, _, _, texture = GetItemInfo(itemID)
+  local _, _, _, _, _, _, _, _, _, texture = (C_Item and C_Item.GetItemInfo or GetItemInfo)(itemID)
   return texture
 end
 
 local function displayLinkOrFallback(itemID, ejLink, ejName)
   if ejLink and ejLink ~= "" then return ejLink end
-
-  local link = itemLinkFromID(itemID)
-  if link then return link end
-
   if ejName and ejName ~= "" then
-    return ("%s (%d)"):format(ejName, itemID)
+    return ejName
   end
 
-  return ("item:%d"):format(itemID)
+  return ("item:%d (loading...)"):format(itemID)
 end
 
 local function makeColoredSlotLabel(slot, isSelected)
@@ -98,6 +99,11 @@ function NS.UI:ShowPanel(which)
 
   if not self.mainPanel then return end
 
+  self.ej.srButtons = {}
+  self.ej.srLabels = {}
+  self.ej.currentLabel = nil
+  self.missingSRButton = nil
+  self.lootMasterToggle = nil
   self.mainPanel:ReleaseChildren()
   self.raidScroll = nil
 
@@ -133,14 +139,20 @@ function NS.UI:OpenMain()
   f:SetLayout("List")
   f:EnableResize(false)
 
-  f:SetCallback("OnClose", function()
+  f:SetCallback("OnClose", function(widget)
     NS.UI.frame = nil
     NS.UI.contentHost = nil
     NS.UI.mainPanel = nil
     NS.UI.raidScroll = nil
+    NS.UI.missingSRButton = nil
+    NS.UI.lootMasterToggle = nil
     NS.UI.tabs.my = nil
     NS.UI.tabs.raid = nil
     NS.UI.tabs.lm = nil
+    NS.UI.ej.srButtons = {}
+    NS.UI.ej.srLabels = {}
+    NS.UI.ej.currentLabel = nil
+    AceGUI:Release(widget)
   end)
 
   self.frame = f
@@ -199,10 +211,11 @@ function NS.UI:UpdateCurrentSRLabel()
 
   local sr = LeagueResDB.profile.mySR or { 0, 0 }
 
-  local t1 = (sr[1] ~= 0 and (itemLinkFromID(sr[1]) or ("item:" .. sr[1]))) or "—"
-  local t2 = (sr[2] ~= 0 and (itemLinkFromID(sr[2]) or ("item:" .. sr[2]))) or "—"
+  local t1, t2 = NS:ReservationText(sr[1]), NS:ReservationText(sr[2])
+  local pending = NS.Character and NS.Character.pendingSubmission
+  self.ej.currentLabel:SetText(("Selected: %s   |   %s%s"):format(t1, t2,
+    pending and "  |cffffaa00Awaiting Loot Master confirmation|r" or ""))
 
-  self.ej.currentLabel:SetText(("Current reservations: %s   |   %s"):format(t1, t2))
 end
 
 function NS.UI:UpdateLootPickerActiveLabel()
@@ -219,7 +232,7 @@ function NS.UI:SetSRSlot(slot, itemID)
   if slot ~= 1 and slot ~= 2 then return end
 
   local sr = LeagueResDB.profile.mySR or { 0, 0 }
-  sr[slot] = itemID or 0
+  sr[slot] = NS:Reservation(itemID)
   LeagueResDB.profile.mySR = sr
 
   self:RefreshSRVisuals()
@@ -244,7 +257,7 @@ function NS.UI:RefreshSRVisuals()
 
     if row and row.item then
       if itemID ~= 0 then
-        local text = itemLinkFromID(itemID) or itemNameFromID(itemID) or ("item:" .. itemID)
+        local text = NS:ReservationText(itemID)
         local icon = itemIconFromID(itemID) or 134400
 
         row.item:SetText(text)
@@ -398,8 +411,9 @@ function NS.UI:RefreshRaidPanel()
     local a = (sr and sr[1]) or 0
     local b = (sr and sr[2]) or 0
 
-    if a ~= 0 then itemCounts[a] = (itemCounts[a] or 0) + 1 end
-    if b ~= 0 then itemCounts[b] = (itemCounts[b] or 0) + 1 end
+    local keyA, keyB = NS:ReservationKey(a), NS:ReservationKey(b)
+    if keyA then itemCounts[keyA] = (itemCounts[keyA] or 0) + 1 end
+    if keyB and keyB ~= keyA then itemCounts[keyB] = (itemCounts[keyB] or 0) + 1 end
 
     rows[#rows + 1] = {
       guid = guid,
@@ -432,16 +446,17 @@ function NS.UI:RefreshRaidPanel()
   self.raidScroll:AddChild(spacer)
 
   local function addItemWidget(parent, itemID)
-    local count = (itemID ~= 0 and itemCounts[itemID]) or 0
+    local key = NS:ReservationKey(itemID)
+    local count = (key and itemCounts[key]) or 0
     local icon = itemIconFromID(itemID)
-    local link = itemLinkFromID(itemID)
-    local name = itemNameFromID(itemID)
+    local r = NS:Reservation(itemID)
+    local link = r ~= 0 and r.link or nil
 
     local text
     if itemID == 0 then
       text = "—"
     else
-      text = link or name or ("item:" .. itemID)
+      text = NS:ReservationText(itemID)
       if count > 1 then
         text = ("%s |cffffaa00(%dx reserved)|r"):format(text, count)
       end
@@ -492,12 +507,10 @@ function NS.UI:BuildLMPanel(container)
   lmToggle:SetValue(LeagueResDB.profile.isLootMaster and true or false)
   lmToggle:SetFullWidth(true)
   lmToggle:SetCallback("OnValueChanged", function(_, _, val)
-    LeagueResDB.profile.isLootMaster = val and true or false
-    if val and not NS:CanBroadcastAsLootMaster() then
-      print("|cffffaa00LeagueRes:|r You are not leader/assistant; others may ignore your settings.")
-    end
+    NS:SetLootMaster(val and true or false)
   end)
   container:AddChild(lmToggle)
+  self.lootMasterToggle = lmToggle
 
   local settings = LeagueResDB.profile.settings
 
@@ -567,10 +580,29 @@ function NS.UI:BuildLMPanel(container)
     NS:ClearAllReservations()
   end)
   btnRow:AddChild(clearAll)
+
+  local checkRow = AceGUI:Create("SimpleGroup")
+  checkRow:SetFullWidth(true)
+  checkRow:SetLayout("Flow")
+  container:AddChild(checkRow)
+
+  local missing = AceGUI:Create("Button")
+  missing:SetText("Check Missing SRs")
+  missing:SetWidth(170)
+  missing:SetCallback("OnClick", function() NS:PrintMissingSubmissions() end)
+  checkRow:AddChild(missing)
+  self.missingSRButton = missing
+
+  local hint = AceGUI:Create("Label")
+  hint:SetWidth(460)
+  hint:SetText("Prints the submission count and missing players in your chat window.")
+  checkRow:AddChild(hint)
+  self:RefreshLMPanel()
 end
 
 function NS.UI:RefreshLMPanel()
-  -- reserved for future dynamic LM refresh logic
+  if self.lootMasterToggle then self.lootMasterToggle:SetValue(LeagueResDB.profile.isLootMaster and true or false) end
+  if self.missingSRButton then self.missingSRButton:SetDisabled(not NS:CanCheckSubmissions()) end
 end
 
 function NS.UI:OpenLootPicker()
@@ -588,6 +620,16 @@ function NS.UI:OpenLootPicker()
   f:SetLayout("Flow")
   f:EnableResize(false)
   self.lootPickerFrame = f
+  f:SetCallback("OnClose", function(widget)
+    NS.UI:StopEJRefresh()
+    NS.UI.lootPickerFrame = nil
+    NS.UI.picker.lootScroll = nil
+    NS.UI.picker.tierDrop = nil
+    NS.UI.picker.instanceDrop = nil
+    NS.UI.picker.diffDrop = nil
+    NS.UI.picker.searchBox = nil
+    AceGUI:Release(widget)
+  end)
 
 
   local closeAfter = AceGUI:Create("CheckBox")
@@ -624,11 +666,7 @@ function NS.UI:OpenLootPicker()
   local diffDrop = AceGUI:Create("Dropdown")
   diffDrop:SetLabel("Difficulty")
   diffDrop:SetWidth(220)
-  diffDrop:SetList({
-    [14] = "Normal (14)",
-    [15] = "Heroic (15)",
-    [16] = "Mythic (16)",
-  })
+  diffDrop:SetList({})
   row2:AddChild(diffDrop)
   self.picker.diffDrop = diffDrop
 
@@ -677,6 +715,7 @@ end)
 
   NS.EJ:InvalidateLootCache(instanceID)
 
+  NS.UI:RefreshEJDifficulties()
   NS.UI:RefreshEJList(true)
 end)
 
@@ -723,38 +762,81 @@ function NS.UI:RefreshEJInstances()
   LeagueResDB.profile.ej.instanceID = chosen
   self.picker.instanceDrop:SetValue(chosen)
 
+  self:RefreshEJDifficulties()
   self:RefreshEJList(true)
 end
 
+function NS.UI:RefreshEJDifficulties()
+  local list, order = NS.EJ:GetDifficulties(LeagueResDB.profile.ej.instanceID)
+  self.picker.diffDrop:SetList(list, order)
+  local chosen = LeagueResDB.profile.ej.difficultyID
+  if not list[chosen] then chosen = order[1] end
+  LeagueResDB.profile.ej.difficultyID = chosen
+  self.picker.diffDrop:SetValue(chosen)
+end
+
+function NS.UI:RefreshReservationPanels()
+  self:RefreshSRVisuals()
+  self:UpdateCurrentSRLabel()
+  self:RefreshRaidPanel()
+  self:RefreshLMPanel()
+end
+
+function NS.UI:StopEJRefresh()
+  if self.picker.refreshTimer then self.picker.refreshTimer:Cancel() end
+  self.picker.refreshTimer = nil
+end
+
+function NS.UI:IsPickerOpen()
+  return self.lootPickerFrame and self.lootPickerFrame.frame:IsShown() and self.picker.lootScroll
+end
+
+function NS.UI:QueueEJRefresh()
+  if not self:IsPickerOpen() or self.picker.refreshTimer then return end
+  self.picker.refreshTimer = C_Timer.NewTimer(0.25, function()
+    self.picker.refreshTimer = nil
+    if self:IsPickerOpen() then self:RefreshEJList(false) end
+  end)
+end
+
 function NS.UI:RefreshEJList(forceInvalidate)
-  if not self.picker.lootScroll then return end
+  if not self:IsPickerOpen() then return end
+  if self.picker.refreshing then return end
 
   local instanceID = LeagueResDB.profile.ej and LeagueResDB.profile.ej.instanceID
   local diffID = LeagueResDB.profile.ej and LeagueResDB.profile.ej.difficultyID or 14
   if not instanceID then return end
 
   if forceInvalidate then
+    self:StopEJRefresh()
+    self.picker.retries = 0
     NS.EJ:InvalidateLootCache(instanceID)
   end
 
-  local loot = NS.EJ:GetInstanceLoot(instanceID, diffID)
+  self.picker.refreshing = true
+  local loot, pending = NS.EJ:GetInstanceLoot(instanceID, diffID)
   local q = (self.picker.searchBox and self.picker.searchBox:GetText() or ""):lower()
 
   self.picker.lootScroll:ReleaseChildren()
   self:UpdateLootPickerActiveLabel()
 
+  local shownCount = 0
   for _, it in ipairs(loot) do
     local shown = displayLinkOrFallback(it.itemID, it.link, it.name)
     local nameForSearch = (it.name or shown):lower()
 
     if q == "" or nameForSearch:find(q, 1, true) then
+      shownCount = shownCount + 1
       local btn = AceGUI:Create("Button")
       btn:SetFullWidth(true)
-      btn:SetText(shown)
+      btn:SetText(shown .. " [" .. NS:DifficultyName(it.difficultyID) .. "]")
+      -- A hyperlink is optional; itemID + Journal difficulty identify the SR.
+      btn:SetDisabled(not it.selectable)
       btn:SetCallback("OnClick", function()
-        NS.UI:SetSRSlot(NS.UI.ej.selectedTarget or 1, it.itemID)
+        NS.UI:SetSRSlot(NS.UI.ej.selectedTarget or 1, it)
         if NS.UI.picker.closeAfterSelect and NS.UI.lootPickerFrame then
           NS.UI.lootPickerFrame:Hide()
+          NS.UI:StopEJRefresh()
         end
       end)
       self.picker.lootScroll:AddChild(btn)
@@ -764,9 +846,23 @@ function NS.UI:RefreshEJList(forceInvalidate)
   if #loot == 0 then
     local lbl = AceGUI:Create("Label")
     lbl:SetFullWidth(true)
-    lbl:SetText("No loot data yet. If this persists, open the Encounter Journal once and try again.")
+    lbl:SetText("Loading loot data... If nothing appears, reselect the raid to retry.")
+    self.picker.lootScroll:AddChild(lbl)
+  elseif pending or shownCount == 0 then
+    local lbl = AceGUI:Create("Label")
+    lbl:SetFullWidth(true)
+    lbl:SetText(pending and "Some item data is still loading; available items can be selected." or "No items match your search.")
     self.picker.lootScroll:AddChild(lbl)
   end
+  self.picker.refreshing = false
+  if pending then
+    self.picker.retries = (self.picker.retries or 0) + 1
+    if self.picker.retries <= 20 then self:QueueEJRefresh() end
+  else
+    self:StopEJRefresh()
+    self.picker.retries = 0
+  end
+
 end
 
 function NS.UI:ShowRollPrompt(data)

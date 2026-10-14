@@ -3,21 +3,21 @@ local ADDON, NS = ...
 NS.Loot = {}
 NS.Loot.announcedRolls = NS.Loot.announcedRolls or {}
 
-local function countReservers(itemID)
+local function countReservers(itemID, difficultyID)
   local n = 0
   for _, sr in pairs(NS.State.raid.reservationsByGuid or {}) do
-    if (sr[1] == itemID) or (sr[2] == itemID) then
+    if NS:MatchesReservation(sr[1], itemID, difficultyID) or NS:MatchesReservation(sr[2], itemID, difficultyID) then
       n = n + 1
     end
   end
   return n
 end
 
-local function getReservers(itemID)
+local function getReservers(itemID, difficultyID)
   local out = {}
 
   for guid, sr in pairs(NS.State.raid.reservationsByGuid or {}) do
-    if (sr[1] == itemID) or (sr[2] == itemID) then
+    if NS:MatchesReservation(sr[1], itemID, difficultyID) or NS:MatchesReservation(sr[2], itemID, difficultyID) then
       local name = (NS.State.raid.nameByGuid and NS.State.raid.nameByGuid[guid]) or guid
       out[#out + 1] = name
     end
@@ -30,9 +30,9 @@ local function getReservers(itemID)
   return out
 end
 
-local function isMine(itemID)
-  local sr = LeagueResDB.profile.mySR or {0, 0}
-  return sr[1] == itemID or sr[2] == itemID
+local function isMine(itemID, difficultyID)
+  local sr = NS.State.raid.reservationsByGuid[NS:GetPlayerGuid()] or {0, 0}
+  return NS:MatchesReservation(sr[1], itemID, difficultyID) or NS:MatchesReservation(sr[2], itemID, difficultyID)
 end
 
 local function myWins()
@@ -47,12 +47,12 @@ local function shortItemText(itemID, itemLink, itemName)
   return "unknown item"
 end
 
-local function announceReservedItem(itemID, itemLink, itemName)
+local function announceReservedItem(itemID, difficultyID, itemLink, itemName)
   if not LeagueResDB or not LeagueResDB.profile or not LeagueResDB.profile.isLootMaster then
     return
   end
 
-  local reservers = getReservers(itemID)
+  local reservers = getReservers(itemID, difficultyID)
   if #reservers == 0 then return end
 
   local itemText = shortItemText(itemID, itemLink, itemName)
@@ -79,15 +79,30 @@ function NS.Loot:OnStartLootRoll(rollID)
     return
   end
 
+  local difficultyID = NS:LootDifficulty(itemLink)
+  -- Unknown old reservations are never guessed as Normal or Heroic.
+  local uncertain = not difficultyID
+  for _, sr in pairs(NS.State.raid.reservationsByGuid) do
+    for i = 1, 2 do
+      local r = NS:Reservation(sr[i])
+      if r ~= 0 and r.itemID == itemID and not r.difficultyID then uncertain = true end
+    end
+  end
+  if uncertain then
+    NS.UI:ShowRollPrompt({rollID = rollID, itemID = itemID, itemLink = itemLink or itemName,
+      decision = "CHECK DIFFICULTY", reason = "Difficulty is unknown. Check reservations before rolling."})
+    return
+  end
+
   local settings = NS.State.raid.settings or LeagueResDB.profile.settings or {}
-  local reservers = countReservers(itemID)
-  local mine = isMine(itemID)
+  local reservers = countReservers(itemID, difficultyID)
+  local mine = isMine(itemID, difficultyID)
 
   -- LM announces reserved items once per roll
   if not self.announcedRolls[rollID] then
     self.announcedRolls[rollID] = true
     if reservers > 0 then
-      announceReservedItem(itemID, itemLink, itemName)
+      announceReservedItem(itemID, difficultyID, itemLink, itemName)
     end
   end
 
@@ -128,7 +143,7 @@ function NS.Loot:OnStartLootRoll(rollID)
   if reservers > 0 then
     RollOnLoot(rollID, 0)
 
-    local names = getReservers(itemID)
+    local names = getReservers(itemID, difficultyID)
     local who = (#names > 0) and table.concat(names, ", ") or ("%d player(s)"):format(reservers)
 
     print(("|cffff0000LeagueRes:|r Auto-passed %s. Reserved by: %s"):format(
