@@ -10,6 +10,7 @@ NS.UI = {
   contentHost = nil,
   raidScroll = nil,
   missingSRButton = nil,
+  lootMasterToggle = nil,
 
   tabs = {
     my = nil,
@@ -102,6 +103,7 @@ function NS.UI:ShowPanel(which)
   self.ej.srLabels = {}
   self.ej.currentLabel = nil
   self.missingSRButton = nil
+  self.lootMasterToggle = nil
   self.mainPanel:ReleaseChildren()
   self.raidScroll = nil
 
@@ -137,18 +139,20 @@ function NS.UI:OpenMain()
   f:SetLayout("List")
   f:EnableResize(false)
 
-  f:SetCallback("OnClose", function()
+  f:SetCallback("OnClose", function(widget)
     NS.UI.frame = nil
     NS.UI.contentHost = nil
     NS.UI.mainPanel = nil
     NS.UI.raidScroll = nil
     NS.UI.missingSRButton = nil
+    NS.UI.lootMasterToggle = nil
     NS.UI.tabs.my = nil
     NS.UI.tabs.raid = nil
     NS.UI.tabs.lm = nil
     NS.UI.ej.srButtons = {}
     NS.UI.ej.srLabels = {}
     NS.UI.ej.currentLabel = nil
+    AceGUI:Release(widget)
   end)
 
   self.frame = f
@@ -208,7 +212,9 @@ function NS.UI:UpdateCurrentSRLabel()
   local sr = LeagueResDB.profile.mySR or { 0, 0 }
 
   local t1, t2 = NS:ReservationText(sr[1]), NS:ReservationText(sr[2])
-  self.ej.currentLabel:SetText(("Selected: %s   |   %s"):format(t1, t2))
+  local pending = NS.Character and NS.Character.pendingSubmission
+  self.ej.currentLabel:SetText(("Selected: %s   |   %s%s"):format(t1, t2,
+    pending and "  |cffffaa00Awaiting Loot Master confirmation|r" or ""))
 
 end
 
@@ -501,13 +507,10 @@ function NS.UI:BuildLMPanel(container)
   lmToggle:SetValue(LeagueResDB.profile.isLootMaster and true or false)
   lmToggle:SetFullWidth(true)
   lmToggle:SetCallback("OnValueChanged", function(_, _, val)
-    LeagueResDB.profile.isLootMaster = val and true or false
-    NS.UI:RefreshLMPanel()
-    if val and not NS:CanBroadcastAsLootMaster() then
-      print("|cffffaa00LeagueRes:|r You are not leader/assistant; others may ignore your settings.")
-    end
+    NS:SetLootMaster(val and true or false)
   end)
   container:AddChild(lmToggle)
+  self.lootMasterToggle = lmToggle
 
   local settings = LeagueResDB.profile.settings
 
@@ -598,6 +601,7 @@ function NS.UI:BuildLMPanel(container)
 end
 
 function NS.UI:RefreshLMPanel()
+  if self.lootMasterToggle then self.lootMasterToggle:SetValue(LeagueResDB.profile.isLootMaster and true or false) end
   if self.missingSRButton then self.missingSRButton:SetDisabled(not NS:CanCheckSubmissions()) end
 end
 

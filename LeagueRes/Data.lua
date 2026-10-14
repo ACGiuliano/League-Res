@@ -1,7 +1,7 @@
 local ADDON, NS = ...
 
 NS.PREFIX = "LeagueRes1" -- addon message prefix (<=16 chars)
-NS.PROTOCOL = 2
+NS.PROTOCOL = 3
 
 NS.DEFAULTS = {
   profile = {
@@ -30,6 +30,11 @@ NS.State = {
     nameByGuid = {},                -- [guid] = "Player-Realm"
     locked = false,
     lootMasterGuid = nil,
+    versionsByGuid = {},            -- per-player submission sequence numbers
+    epoch = 0,                     -- advances only on an explicit Clear All
+    settingsRevision = 0,
+    authorityTerm = 0,
+    retiredMasters = {},
   },
 }
 
