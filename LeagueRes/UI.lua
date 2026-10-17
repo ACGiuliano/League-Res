@@ -11,6 +11,7 @@ NS.UI = {
   raidScroll = nil,
   missingSRButton = nil,
   lootMasterToggle = nil,
+  versionCheckButton = nil,
 
   tabs = {
     my = nil,
@@ -104,6 +105,7 @@ function NS.UI:ShowPanel(which)
   self.ej.currentLabel = nil
   self.missingSRButton = nil
   self.lootMasterToggle = nil
+  self.versionCheckButton = nil
   self.mainPanel:ReleaseChildren()
   self.raidScroll = nil
 
@@ -146,6 +148,7 @@ function NS.UI:OpenMain()
     NS.UI.raidScroll = nil
     NS.UI.missingSRButton = nil
     NS.UI.lootMasterToggle = nil
+    NS.UI.versionCheckButton = nil
     NS.UI.tabs.my = nil
     NS.UI.tabs.raid = nil
     NS.UI.tabs.lm = nil
@@ -593,9 +596,16 @@ function NS.UI:BuildLMPanel(container)
   checkRow:AddChild(missing)
   self.missingSRButton = missing
 
+  local versions = AceGUI:Create("Button")
+  versions:SetText("Check Versions")
+  versions:SetWidth(170)
+  versions:SetCallback("OnClick", function() NS:CheckVersions() end)
+  checkRow:AddChild(versions)
+  self.versionCheckButton = versions
+
   local hint = AceGUI:Create("Label")
-  hint:SetWidth(460)
-  hint:SetText("Prints the submission count and missing players in your chat window.")
+  hint:SetWidth(290)
+  hint:SetText("Prints missing submissions or different addon versions in your chat window.")
   checkRow:AddChild(hint)
   self:RefreshLMPanel()
 end
@@ -603,6 +613,9 @@ end
 function NS.UI:RefreshLMPanel()
   if self.lootMasterToggle then self.lootMasterToggle:SetValue(LeagueResDB.profile.isLootMaster and true or false) end
   if self.missingSRButton then self.missingSRButton:SetDisabled(not NS:CanCheckSubmissions()) end
+  if self.versionCheckButton then
+    self.versionCheckButton:SetDisabled(not NS:CanCheckSubmissions() or (NS.versionCheck and not NS.versionCheck.finished) or false)
+  end
 end
 
 function NS.UI:OpenLootPicker()

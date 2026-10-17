@@ -33,6 +33,8 @@ function LeagueRes:OnInitialize()
     if character.raid[k] == nil then character.raid[k] = NS:Copy(v) end
   end
   NS.Character = character
+  local getMetadata = C_AddOns and C_AddOns.GetAddOnMetadata or GetAddOnMetadata
+  NS.VERSION = (getMetadata and getMetadata(ADDON, "Version")) or "unknown"
   profile.mySR = character.mySR
   NS.State.raid = character.raid
   character.submissionSequence = math.max(character.submissionSequence or 0, character.raid.versionsByGuid[guid] or 0)
@@ -403,11 +405,84 @@ function NS:ClearAllReservations()
   print("|cff00ff00LeagueRes:|r Cleared all soft-res reservations.")
 end
 
+function NS:BuildVersionReport()
+  local members, total = self:GetCurrentGroupRoster()
+  local report = { total = total, matching = 0, different = {}, missing = {}, unresolved = total - #members }
+  local replies = NS.versionCheck and NS.versionCheck.replies or {}
+  for _, member in ipairs(members) do
+    local reply = replies[member.guid]
+    if not reply then
+      report.missing[#report.missing + 1] = member.name
+    elseif reply.version ~= NS.VERSION or reply.protocol ~= NS.PROTOCOL then
+      report.different[#report.different + 1] = { name = member.name, version = reply.version, protocol = reply.protocol }
+    else
+      report.matching = report.matching + 1
+    end
+  end
+  return report
+end
+
+function NS:FinishVersionCheck(request)
+  if not NS.versionCheck or NS.versionCheck.request ~= request then return end
+  NS.versionCheck.timer = nil
+  local report = self:BuildVersionReport()
+  print(("|cff00ff00LeagueRes:|r Version check: yours is %s. %d/%d match; %d differ; %d did not respond."):format(
+    NS.VERSION, report.matching, report.total, #report.different, #report.missing))
+  for _, player in ipairs(report.different) do
+    local extra = player.protocol ~= NS.PROTOCOL and " (incompatible communication protocol)" or ""
+    print(("|cffffaa00LeagueRes:|r Different version: %s — %s%s"):format(player.name, player.version, extra))
+  end
+  for _, name in ipairs(report.missing) do
+    print("|cffffaa00LeagueRes:|r No version response: " .. name)
+  end
+  if #report.missing > 0 then
+    print("|cffffaa00LeagueRes:|r No response may mean an older build without version checks, a disabled/missing addon, a disconnected player, or a missed message.")
+  end
+  if report.unresolved > 0 then
+    print("|cffffaa00LeagueRes:|r Some group names are still loading; check again shortly.")
+  elseif report.total > 0 and report.matching == report.total then
+    print("|cff00ff00LeagueRes:|r Everyone in the current group is on your version.")
+  end
+  NS.versionCheck.finished = true
+  NS.UI:RefreshLMPanel()
+end
+
+function NS:CheckVersions()
+  if not self:CanCheckSubmissions() then
+    print("|cffffaa00LeagueRes:|r Join a group as Loot Master or group leader to check versions.")
+    return
+  end
+  if NS.versionCheck and NS.versionCheck.timer then NS.versionCheck.timer:Cancel() end
+  NS.Character.versionCheckSequence = (NS.Character.versionCheckSequence or 0) + 1
+  local request = self:GetPlayerGuid() .. ":" .. GetServerTime() .. ":" .. NS.Character.versionCheckSequence
+  NS.versionCheck = { request = request, replies = {
+    [self:GetPlayerGuid()] = { version = NS.VERSION, protocol = NS.PROTOCOL },
+  } }
+  NS.versionCheck.timer = C_Timer.NewTimer(5, function() NS:FinishVersionCheck(request) end)
+  NS.Comm:Broadcast({ t = "VERSION_QUERY", v = NS.PROTOCOL, request = request })
+  print("|cff00ff00LeagueRes:|r Checking group versions... results in 5 seconds.")
+  NS.UI:RefreshLMPanel()
+end
+
 function NS:OnComm(msg, sender)
+  -- Version discovery stays independent of the reservation protocol.
+  if msg.t == "VERSION_QUERY" or msg.t == "VERSION_REPLY" then
+    local guid = self:SenderGuid(sender)
+    if not guid or guid == self:GetPlayerGuid() or type(msg.request) ~= "string" or #msg.request > 160 then return end
+    if msg.t == "VERSION_QUERY" then
+      NS.Comm:Whisper({ t = "VERSION_REPLY", v = NS.PROTOCOL, request = msg.request,
+        version = NS.VERSION, protocol = NS.PROTOCOL }, sender)
+    elseif NS.versionCheck and not NS.versionCheck.finished and msg.request == NS.versionCheck.request
+      and type(msg.version) == "string" and #msg.version <= 64
+      and not msg.version:find("[|%c]") and type(msg.protocol) == "number" then
+      NS.versionCheck.replies[guid] = { version = msg.version, protocol = msg.protocol }
+    end
+    return
+  end
   if msg.v ~= NS.PROTOCOL then
     if not NS.warnedOldVersion then
       NS.warnedOldVersion = true
-      print("|cffffaa00LeagueRes:|r Incompatible addon version detected. Everyone must update to 1.2.")
+      print(("|cffffaa00LeagueRes:|r Incompatible addon version detected. Everyone must update to %s."):format(NS.VERSION))
     end
     return
   end
