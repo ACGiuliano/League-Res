@@ -3,7 +3,7 @@
 ## Notes: Soft reserve assistant for raid teams.
 ## Author: Bing Streans
 ## IconTexture: Interface\Icons\INV_cape_special_treasure_c_01
-## Version: 1.2
+## Version: 1.2.1
 ## SavedVariables: LeagueResDB
 ## Dependencies: Ace3
 

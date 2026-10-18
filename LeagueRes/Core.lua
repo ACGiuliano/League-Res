@@ -282,6 +282,7 @@ function NS:RetrySubmission()
   end
   NS.submissionTimer = C_Timer.NewTimer(2, function()
     NS.submissionTimer = nil
+    NS:SendSyncRequest()
     NS:SendPendingSubmission()
     NS:RetrySubmission()
   end)
@@ -306,11 +307,12 @@ function NS:MergeReservation(guid, sr, seq)
   return true
 end
 
-function NS:AdoptEpoch(epoch)
+function NS:AdoptEpoch(epoch, requestedRecovery)
   local state = NS.State.raid
-  if type(epoch) ~= "number" or epoch < state.epoch then return false end
-  if epoch > state.epoch then
-    -- A new epoch represents an explicit Clear All, including when reconnecting.
+  if type(epoch) ~= "number" or (epoch < state.epoch and not requestedRecovery) then return false end
+  if epoch ~= state.epoch then
+    -- Higher counters represent Clear All. A fresh requested snapshot can also
+    -- repair a counter saved from another raid; unsolicited older packets cannot.
     state.epoch = epoch
     wipe(state.reservationsByGuid)
     wipe(state.versionsByGuid)
@@ -320,11 +322,18 @@ function NS:AdoptEpoch(epoch)
   return true
 end
 
+function NS:SendSyncRequest()
+  local me, state = self:GetPlayerGuid(), NS.State.raid
+  NS.Character.syncSequence = (NS.Character.syncSequence or 0) + 1
+  local request = me .. ":" .. NS.Character.syncSequence
+  NS.syncRequest = { id = request, epoch = state.epoch }
+  NS.Comm:Broadcast({ t = "HELLO", v = NS.PROTOCOL, epoch = state.epoch,
+    guid = me, request = request, sr = state.reservationsByGuid[me], seq = state.versionsByGuid[me] })
+end
+
 function NS:RequestSync()
   if not self:IsInRaid() then return end
-  local me, state = self:GetPlayerGuid(), NS.State.raid
-  NS.Comm:Broadcast({ t = "HELLO", v = NS.PROTOCOL, epoch = state.epoch,
-    guid = me, sr = state.reservationsByGuid[me], seq = state.versionsByGuid[me] })
+  self:SendSyncRequest()
   self:SendPendingSubmission()
   if NS.Character.pendingSubmission and not NS.submissionTimer then
     NS.submissionRetries = 0
@@ -386,7 +395,7 @@ function NS:BroadcastReservation(guid)
     sr = state.reservationsByGuid[guid], seq = state.versionsByGuid[guid], name = state.nameByGuid[guid] })
 end
 
-function NS:BroadcastFullSync(target)
+function NS:BroadcastFullSync(target, request)
   if not self:ClaimLootMaster() then return end
   local state = NS.State.raid
   local msg = { t = "FULLSYNC", v = NS.PROTOCOL, lm = self:GetPlayerGuid(), term = state.authorityTerm,
@@ -394,7 +403,12 @@ function NS:BroadcastFullSync(target)
     settings = state.settings or LeagueResDB.profile.settings,
     reservations = state.reservationsByGuid, versions = state.versionsByGuid,
     wins = state.winsByGuid, names = state.nameByGuid }
-  if target then NS.Comm:Whisper(msg, target) else NS.Comm:Broadcast(msg) end
+  -- Use the same group transport as submissions; a missed/blocked whisper must
+  -- not prevent a player from learning the owner and accepting receipts.
+  if target and type(request) == "string" and #request <= 160 then
+    msg.request, msg.requestGuid = request, self:SenderGuid(target)
+  end
+  NS.Comm:Broadcast(msg)
 end
 
 function NS:ClearAllReservations()
@@ -506,7 +520,7 @@ function NS:OnComm(msg, sender)
         self:MergeReservation(senderGuid, msg.sr, msg.seq)
         state.nameByGuid[senderGuid] = sender
       end
-      self:BroadcastFullSync(sender)
+      self:BroadcastFullSync(sender, msg.request)
       NS.UI:RefreshReservationPanels()
     end
     return
@@ -530,7 +544,11 @@ function NS:OnComm(msg, sender)
     end
   elseif msg.t == "FULLSYNC" or msg.t == "ACCEPT" or msg.t == "REJECT" then
     if msg.lm ~= senderGuid then return end
-    if type(msg.epoch) ~= "number" or msg.epoch < state.epoch then return end
+    local request = NS.syncRequest
+    local requestedRecovery = msg.t == "FULLSYNC" and request
+      and msg.request == request.id and msg.requestGuid == self:GetPlayerGuid()
+      and request.epoch == state.epoch
+    if type(msg.epoch) ~= "number" or (msg.epoch < state.epoch and not requestedRecovery) then return end
     -- Only claims/snapshots can establish authority, not a delayed receipt from another LM.
     if msg.t ~= "FULLSYNC" and self:ActiveLootMaster() ~= senderGuid then return end
     local accepted, changed = self:AcceptAuthority(senderGuid, msg.term)
@@ -538,7 +556,16 @@ function NS:OnComm(msg, sender)
       if msg.t == "FULLSYNC" and self:IsActiveLootMaster() then self:BroadcastFullSync(sender) end
       return
     end
-    if not self:AdoptEpoch(msg.epoch) then return end
+    local recoveringOlder = requestedRecovery and msg.epoch < state.epoch
+    local pending = recoveringOlder and NS.Character.pendingSubmission
+    if not self:AdoptEpoch(msg.epoch, requestedRecovery) then return end
+    if requestedRecovery then NS.syncRequest = nil end
+    if recoveringOlder then state.settingsRevision = -1 end
+    if pending then
+      -- Retry the user's explicit submission against the master's actual rules.
+      pending.epoch = state.epoch
+      NS.Character.pendingSubmission = pending
+    end
     if msg.t == "FULLSYNC" then
       if type(msg.settings) == "table" and type(msg.settingsRevision) == "number"
         and msg.settingsRevision >= state.settingsRevision then
@@ -553,7 +580,7 @@ function NS:OnComm(msg, sender)
         for guid, name in pairs(msg.names) do state.nameByGuid[guid] = name end
       end
       if type(msg.wins) == "table" then state.winsByGuid = self:Copy(msg.wins) end
-      if changed then self:RequestSync() end
+      if changed or recoveringOlder then self:RequestSync() end
     elseif msg.t == "ACCEPT" then
       if msg.guid then
         self:MergeReservation(msg.guid, msg.sr, msg.seq)
